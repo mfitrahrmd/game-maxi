@@ -14,14 +14,14 @@ class FSM {
     this.state.enter(this);
   }
 
-  update(time, input) {
-    this.state.update(this, time, input);
+  update(input) {
+    this.state.update(this, input);
   }
 }
 
 class State {
   enter(fsm) {}
-  update(fsm, time, input) {}
+  update(fsm, input) {}
   exit(fsm) {}
 }
 
@@ -30,7 +30,7 @@ class IdleState extends State {
     fsm.unit.setVelocityX(0);
   }
 
-  update(fsm, time, input) {
+  update(fsm, input) {
     fsm.unit.anims.play("idle", true);
 
     if (input.left.isDown) fsm.changeState(new RunningState("left", 100));
@@ -49,7 +49,7 @@ class RunningState extends State {
 
   enter(fsm) {}
 
-  update(fsm, time, input) {
+  update(fsm, input) {
     fsm.unit.anims.play("run", true);
     switch (this.direction) {
       case "left":
@@ -88,7 +88,7 @@ class JumpingState extends State {
     }
   }
 
-  update(fsm, time, input) {
+  update(fsm, input) {
     const currentTime = fsm.unit.scene.time.now;
     if (
       input.space.isDown &&
@@ -114,7 +114,7 @@ class JumpingState extends State {
 }
 
 class FallingState extends State {
-  update(fsm, time, input) {
+  update(fsm, input) {
     fsm.unit.anims.play("fall", true);
     if (input.left.isDown) {
       fsm.unit.setVelocityX(-100);
@@ -134,7 +134,7 @@ class DropState extends State {
     fsm.unit.setVelocityY(0);
   }
 
-  update(fsm, time, input) {
+  update(fsm, input) {
     if (input.space.isDown) {
       fsm.changeState(new JumpingState(200));
     } else if (input.left.isDown) {
@@ -227,7 +227,7 @@ export default class MainScene extends Phaser.Scene {
     this.physics.add.collider(this.player, this.platform);
   }
   update(time, delta) {
-    this.playerFSM.update(time, this.keyboard);
+    this.playerFSM.update(this.keyboard);
     this.platforms.children.iterate((child, i) => {
       // move each platform to the bottom each frame
       child.setVelocityY(50);
