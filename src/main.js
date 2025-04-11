@@ -14,8 +14,8 @@ export default new Phaser.Game({
       },
     },
   },
-  width: 720,
-  height: 1280,
+  width: 1280,
+  height: 720,
   scene: [MainScene],
   scale: {
     mode: Phaser.Scale.FIT,

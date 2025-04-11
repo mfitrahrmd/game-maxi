@@ -2,9 +2,9 @@ import Phaser from "phaser";
 
 // Finite State Machine
 class FSM {
-  constructor(unit) {
+  constructor(unit, initialState) {
     this.unit = unit;
-    this.state = new IdleState();
+    this.state = initialState;
     this.state.enter(this);
   }
 
@@ -14,14 +14,14 @@ class FSM {
     this.state.enter(this);
   }
 
-  update(input) {
-    this.state.update(this, input);
+  update(time, input) {
+    this.state.update(this, time, input);
   }
 }
 
 class State {
   enter(fsm) {}
-  update(fsm, input) {}
+  update(fsm, time, input) {}
   exit(fsm) {}
 }
 
@@ -30,13 +30,13 @@ class IdleState extends State {
     fsm.unit.setVelocityX(0);
   }
 
-  update(fsm, input) {
+  update(fsm, time, input) {
     fsm.unit.anims.play("idle", true);
 
     if (input.left.isDown) fsm.changeState(new RunningState("left", 100));
     else if (input.right.isDown)
       fsm.changeState(new RunningState("right", 100));
-    else if (input.space.isDown) fsm.changeState(new JumpingState(500));
+    else if (input.space.isDown) fsm.changeState(new JumpingState(200));
   }
 }
 
@@ -49,15 +49,14 @@ class RunningState extends State {
 
   enter(fsm) {}
 
-  update(fsm, input) {
+  update(fsm, time, input) {
+    fsm.unit.anims.play("run", true);
     switch (this.direction) {
       case "left":
-        fsm.unit.anims.play("run", true);
         fsm.unit.setFlipX(false);
         fsm.unit.setVelocityX(-this.speed);
         break;
       case "right":
-        fsm.unit.anims.play("run", true);
         fsm.unit.setFlipX(true);
         fsm.unit.setVelocityX(this.speed);
         break;
@@ -68,7 +67,7 @@ class RunningState extends State {
       fsm.changeState(new RunningState("right", this.speed));
     else fsm.changeState(new IdleState());
 
-    if (input.space.isDown) fsm.changeState(new JumpingState(500));
+    if (input.space.isDown) fsm.changeState(new JumpingState(200));
   }
 }
 
@@ -76,21 +75,38 @@ class JumpingState extends State {
   constructor(height) {
     super();
     this.height = height;
+    this.jumpStartTime = null;
+    this.maxHoldTime = 100; // max time to hold jump
+    this.extraHeight = 200; // extra height to jump
   }
 
   enter(fsm) {
     if (fsm.unit.body.onFloor()) {
       fsm.unit.anims.play("jump", true);
       fsm.unit.setVelocityY(-this.height);
+      this.jumpStartTime = fsm.unit.scene.time.now;
     }
   }
 
-  update(fsm, input) {
+  update(fsm, time, input) {
+    const currentTime = fsm.unit.scene.time.now;
+    if (
+      input.space.isDown &&
+      this.jumpStartTime &&
+      currentTime - this.jumpStartTime <= this.maxHoldTime
+    ) {
+      const holdDuration = currentTime - this.jumpStartTime;
+      const additionalHeight =
+        (holdDuration / this.maxHoldTime) * this.extraHeight;
+      fsm.unit.setVelocityY(-this.height - additionalHeight);
+    }
+
     if (input.left.isDown) {
       fsm.unit.setVelocityX(-100);
     } else if (input.right.isDown) {
       fsm.unit.setVelocityX(100);
     }
+
     if (!fsm.unit.anims.isPlaying) {
       fsm.changeState(new FallingState());
     }
@@ -98,7 +114,7 @@ class JumpingState extends State {
 }
 
 class FallingState extends State {
-  update(fsm, input) {
+  update(fsm, time, input) {
     fsm.unit.anims.play("fall", true);
     if (input.left.isDown) {
       fsm.unit.setVelocityX(-100);
@@ -118,9 +134,9 @@ class DropState extends State {
     fsm.unit.setVelocityY(0);
   }
 
-  update(fsm, input) {
+  update(fsm, time, input) {
     if (input.space.isDown) {
-      fsm.changeState(new JumpingState(500));
+      fsm.changeState(new JumpingState(200));
     } else if (input.left.isDown) {
       fsm.changeState(new RunningState("left", 100));
     } else if (input.right.isDown) {
@@ -142,6 +158,8 @@ export default class MainScene extends Phaser.Scene {
     this.keyboard = undefined;
     this.platforms = undefined;
     this.lastPlatformX = undefined;
+    this.gameWidth = this.game.config.width;
+    this.gameHeight = this.game.config.height;
   }
   preload() {
     this.load.spritesheet("redhood", "images/redhood.png", {
@@ -152,21 +170,21 @@ export default class MainScene extends Phaser.Scene {
   }
   create() {
     this.player = this.physics.add
-      .sprite(0, 1280)
+      .sprite(0, this.gameHeight)
       .setBodySize(28, 40)
       .setOffset(42, 60);
     this.createAnimation();
-    this.playerFSM = new FSM(this.player);
+    this.playerFSM = new FSM(this.player, new IdleState());
     this.keyboard = this.input.keyboard.addKeys("left,right,up,down,space");
     this.player.setCollideWorldBounds(true);
 
     this.platforms = this.physics.add.group({
       key: "vite",
-      repeat: 10,
+      repeat: 6,
       setXY: {
-        x: 360, // temporarily put all platforms at the middle of the screen
-        y: 1000,
-        stepY: -128, // the step or space of platforms from each other
+        x: this.gameWidth / 2, // temporarily put all platforms at the middle of the screen
+        y: 720,
+        stepY: -120, // the step or space of platforms from each other
       },
       setScale: {
         x: 3,
@@ -183,13 +201,13 @@ export default class MainScene extends Phaser.Scene {
 
         return;
       }
-      if (this.lastPlatformX <= 360 + -100 * 3) {
+      if (this.lastPlatformX <= this.gameWidth / 2 + -100 * 6) {
         /*
         if the last platform has been placed on the far left side,
         put current platform to the right
         */
         child.setX(this.lastPlatformX + 100);
-      } else if (this.lastPlatformX >= 360 + 100 * 3) {
+      } else if (this.lastPlatformX >= this.gameWidth / 2 + 100 * 6) {
         /*
         if the last platform has been placed on the far right side,
         put current platform to the left
@@ -208,12 +226,12 @@ export default class MainScene extends Phaser.Scene {
     });
     this.physics.add.collider(this.player, this.platform);
   }
-  update() {
-    this.playerFSM.update(this.keyboard);
+  update(time, delta) {
+    this.playerFSM.update(time, this.keyboard);
     this.platforms.children.iterate((child, i) => {
       // move each platform to the bottom each frame
       child.setVelocityY(50);
-      if (child.y > 1280) {
+      if (child.y > 720) {
         child.setY(0);
       }
     });
