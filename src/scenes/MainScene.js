@@ -1,48 +1,107 @@
 import Phaser from "phaser";
 
 // Finite State Machine
-class FSM {
-  constructor(unit, initialState) {
-    this.unit = unit;
-    this.state = initialState;
-    this.state.enter(this);
+class StateMachine {
+  constructor(initialState, context) {
+    this.context = context;
+    this.states = new Map();
+    this.currentState = null;
+  }
+
+  addState(name, state, setAsCurrent = false) {
+    this.states.set(name, state);
+    if (setAsCurrent) {
+      this.changeState(name);
+    }
+
+    return this;
   }
 
   changeState(newState) {
-    this.state.exit(this);
-    this.state = newState;
-    this.state.enter(this);
+    if (this.currentState) {
+      this.currentState.exit(this);
+    }
+    const state = this.states.get(newState);
+    // if (!state) {
+    //   this.currentState = new NullState();
+
+    //   return;
+    // }
+    this.currentState = state;
+    this.currentState.enter(this);
   }
 
   update(input) {
-    this.state.update(this, input);
+    this.currentState?.update(this, input);
   }
 }
 
 class State {
+  constructor(stateMachine, name) {
+    this.stateMachine = stateMachine;
+    this.name = name;
+  }
+
   enter(fsm) {}
   update(fsm, input) {}
   exit(fsm) {}
 }
 
-class IdleState extends State {
+class UnArmedState extends State {
+  constructor(stateMachine) {
+    super(stateMachine, "unarmed");
+  }
+
   enter(fsm) {
-    fsm.unit.setVelocityX(0);
+    this.subStateMachine = new StateMachine("idle", this.stateMachine.context);
+    this.subStateMachine
+      .addState("idle", new UnarmedIdleState(this.subStateMachine), true)
+      .addState(
+        "run-left",
+        new UnarmedRunningState(this.subStateMachine, "left", 100)
+      )
+      .addState(
+        "run-right",
+        new UnarmedRunningState(this.subStateMachine, "right", 100)
+      )
+      .addState("jump", new UnarmedJumpingState(this.subStateMachine, 200))
+      .addState("fall", new UnarmedFallingState(this.subStateMachine))
+      .addState("drop", new UnarmedDropState(this.subStateMachine));
   }
 
   update(fsm, input) {
-    fsm.unit.anims.play("idle", true);
+    this.subStateMachine.update(input);
+    if (input.t.isDown) {
+      this.stateMachine.changeState("armed");
+    }
+  }
 
-    if (input.left.isDown) fsm.changeState(new RunningState("left", 100));
-    else if (input.right.isDown)
-      fsm.changeState(new RunningState("right", 100));
-    else if (input.space.isDown) fsm.changeState(new JumpingState(200));
+  exit(fsm) {
+    this.subStateMachine = null;
   }
 }
 
-class RunningState extends State {
-  constructor(direction, speed) {
-    super();
+class UnarmedIdleState extends State {
+  constructor(stateMachine) {
+    super(stateMachine, "idle");
+  }
+
+  enter(fsm) {
+    fsm.context.setVelocityX(0);
+  }
+
+  update(fsm, input) {
+    fsm.context.anims.play("idle", true);
+
+    if (input.left.isDown) this.stateMachine.changeState("run-left");
+    else if (input.right.isDown) this.stateMachine.changeState("run-right");
+    else if (input.space.isDown) this.stateMachine.changeState("jump");
+  }
+}
+
+class UnarmedRunningState extends State {
+  constructor(stateMachine, direction, speed) {
+    super(stateMachine, "run");
     this.direction = direction;
     this.speed = speed;
   }
@@ -50,30 +109,28 @@ class RunningState extends State {
   enter(fsm) {}
 
   update(fsm, input) {
-    fsm.unit.anims.play("run", true);
+    fsm.context.anims.play("run", true);
     switch (this.direction) {
       case "left":
-        fsm.unit.setFlipX(false);
-        fsm.unit.setVelocityX(-this.speed);
+        fsm.context.setFlipX(false);
+        fsm.context.setVelocityX(-this.speed);
         break;
       case "right":
-        fsm.unit.setFlipX(true);
-        fsm.unit.setVelocityX(this.speed);
+        fsm.context.setFlipX(true);
+        fsm.context.setVelocityX(this.speed);
         break;
     }
-    if (input.left.isDown)
-      fsm.changeState(new RunningState("left", this.speed));
-    else if (input.right.isDown)
-      fsm.changeState(new RunningState("right", this.speed));
-    else fsm.changeState(new IdleState());
+    if (input.left.isDown) this.stateMachine.changeState("run-left");
+    else if (input.right.isDown) this.stateMachine.changeState("run-right");
+    else this.stateMachine.changeState("idle");
 
-    if (input.space.isDown) fsm.changeState(new JumpingState(200));
+    if (input.space.isDown) this.stateMachine.changeState("jump");
   }
 }
 
-class JumpingState extends State {
-  constructor(height) {
-    super();
+class UnarmedJumpingState extends State {
+  constructor(stateMachine, height) {
+    super(stateMachine, "jump");
     this.height = height;
     this.jumpStartTime = null;
     this.maxHoldTime = 100; // max time to hold jump
@@ -81,15 +138,15 @@ class JumpingState extends State {
   }
 
   enter(fsm) {
-    if (fsm.unit.body.onFloor()) {
-      fsm.unit.anims.play("jump", true);
-      fsm.unit.setVelocityY(-this.height);
-      this.jumpStartTime = fsm.unit.scene.time.now;
+    if (fsm.context.body.onFloor()) {
+      fsm.context.anims.play("jump", true);
+      fsm.context.setVelocityY(-this.height);
+      this.jumpStartTime = fsm.context.scene.time.now;
     }
   }
 
   update(fsm, input) {
-    const currentTime = fsm.unit.scene.time.now;
+    const currentTime = fsm.context.scene.time.now;
     if (
       input.space.isDown &&
       this.jumpStartTime &&
@@ -98,63 +155,107 @@ class JumpingState extends State {
       const holdDuration = currentTime - this.jumpStartTime;
       const additionalHeight =
         (holdDuration / this.maxHoldTime) * this.extraHeight;
-      fsm.unit.setVelocityY(-this.height - additionalHeight);
+      fsm.context.setVelocityY(-this.height - additionalHeight);
     }
 
     if (input.left.isDown) {
-      fsm.unit.setVelocityX(-100);
+      fsm.context.setVelocityX(-100);
     } else if (input.right.isDown) {
-      fsm.unit.setVelocityX(100);
+      fsm.context.setVelocityX(100);
     }
 
-    if (!fsm.unit.anims.isPlaying) {
-      fsm.changeState(new FallingState());
-    }
+    if (!fsm.context.anims.isPlaying) this.stateMachine.changeState("fall");
   }
 }
 
-class FallingState extends State {
+class UnarmedFallingState extends State {
+  constructor(stateMachine) {
+    super(stateMachine, "fall");
+  }
+
   update(fsm, input) {
-    fsm.unit.anims.play("fall", true);
+    fsm.context.anims.play("fall", true);
     if (input.left.isDown) {
-      fsm.unit.setVelocityX(-100);
+      fsm.context.setVelocityX(-100);
     } else if (input.right.isDown) {
-      fsm.unit.setVelocityX(100);
+      fsm.context.setVelocityX(100);
     }
-    if (fsm.unit.body.onFloor()) {
-      fsm.changeState(new DropState());
-    }
+    if (fsm.context.body.onFloor()) this.stateMachine.changeState("drop");
   }
 }
 
-class DropState extends State {
+class UnarmedDropState extends State {
+  constructor(stateMachine) {
+    super(stateMachine, "drop");
+  }
+
   enter(fsm) {
-    fsm.unit.anims.play("drop", true);
-    fsm.unit.setVelocityX(0);
-    fsm.unit.setVelocityY(0);
+    fsm.context.anims.play("drop", true);
+    fsm.context.setVelocityX(0);
+    fsm.context.setVelocityY(0);
   }
 
   update(fsm, input) {
     if (input.space.isDown) {
-      fsm.changeState(new JumpingState(200));
+      this.stateMachine.changeState("jump");
     } else if (input.left.isDown) {
-      fsm.changeState(new RunningState("left", 100));
+      this.stateMachine.changeState("run-left");
     } else if (input.right.isDown) {
-      fsm.changeState(new RunningState("right", 100));
+      this.stateMachine.changeState("run-right");
     }
     if (
-      !fsm.unit.anims.isPlaying &&
-      fsm.unit.anims.currentAnim.key === "drop"
+      !fsm.context.anims.isPlaying &&
+      fsm.context.anims.currentAnim.key === "drop"
     ) {
-      fsm.changeState(new IdleState());
+      this.stateMachine.changeState("idle");
     }
+  }
+}
+
+class ArmedState extends State {
+  constructor(stateMachine) {
+    super(stateMachine, "armed");
+  }
+
+  enter(fsm) {
+    this.subStateMachine = new StateMachine("idle", this.stateMachine.context);
+    this.subStateMachine.addState(
+      "idle",
+      new ArmedIdleState(this.subStateMachine),
+      true
+    );
+  }
+
+  update(fsm, input) {
+    this.subStateMachine.update(input);
+    if (input.t.isDown) {
+      this.stateMachine.changeState("unarmed");
+    }
+  }
+
+  exit(fsm) {
+    this.subStateMachine = null;
+  }
+}
+
+class ArmedIdleState extends State {
+  constructor(stateMachine) {
+    super(stateMachine, "idle");
+  }
+
+  enter(fsm) {
+    fsm.context.setVelocityX(0);
+  }
+
+  update(fsm, input) {
+    fsm.context.anims.play("armed-idle", true);
   }
 }
 
 export default class MainScene extends Phaser.Scene {
   init() {
     this.player = undefined;
-    this.playerFSM = undefined;
+    this.playerStateMachine = undefined;
     this.keyboard = undefined;
     this.platforms = undefined;
     this.lastPlatformX = undefined;
@@ -166,16 +267,33 @@ export default class MainScene extends Phaser.Scene {
       frameWidth: 1344 / 12, // 112
       frameHeight: 1463 / 11, // 133
     });
+    this.load.spritesheet(
+      "redhood-armed-idle",
+      "images/redhood-armed-idle.png",
+      {
+        frameWidth: 2016 / 18,
+        frameHeight: 133,
+      }
+    );
     this.load.image("vite", "vite.svg");
   }
   create() {
     this.player = this.physics.add
-      .sprite(0, this.gameHeight)
+      .sprite(this.gameWidth / 2, this.gameHeight)
       .setBodySize(28, 40)
       .setOffset(42, 60);
     this.createAnimation();
-    this.playerFSM = new FSM(this.player, new IdleState());
-    this.keyboard = this.input.keyboard.addKeys("left,right,up,down,space");
+    this.playerStateMachine = new StateMachine("unarmed", this.player);
+    this.playerStateMachine.addState(
+      "unarmed",
+      new UnArmedState(this.playerStateMachine),
+      true
+    );
+    this.playerStateMachine.addState(
+      "armed",
+      new ArmedState(this.playerStateMachine)
+    );
+    this.keyboard = this.input.keyboard.addKeys("left,right,up,down,space,t");
     this.player.setCollideWorldBounds(true);
 
     this.platforms = this.physics.add.group({
@@ -227,7 +345,7 @@ export default class MainScene extends Phaser.Scene {
     this.physics.add.collider(this.player, this.platform);
   }
   update(time, delta) {
-    this.playerFSM.update(this.keyboard);
+    this.playerStateMachine.update(this.keyboard);
     this.platforms.children.iterate((child, i) => {
       // move each platform to the bottom each frame
       child.setVelocityY(50);
@@ -277,6 +395,11 @@ export default class MainScene extends Phaser.Scene {
         end: 51,
       }),
       frameRate: 12,
+    });
+    this.player.anims.create({
+      key: "armed-idle",
+      frames: this.anims.generateFrameNames("redhood-armed-idle"),
+      frameRate: 18,
     });
   }
 }
